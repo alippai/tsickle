@@ -7,6 +7,10 @@
  */
 
 import * as path from 'path';
+
+import {mangledModuleName, mangledModuleNameFromFileName} from './externs';
+import {resolveModuleName} from './googmodule';
+import {AnnotatorHost, isAmbient} from './jsdoc_transformer';
 import * as ts from './typescript';
 
 /**
@@ -154,8 +158,8 @@ export class TypeTranslator {
    *     translation, e.g. to blacklist a symbol.
    */
   constructor(
-      private readonly typeChecker: ts.TypeChecker, private readonly node: ts.Node,
-      private readonly pathBlackList?: Set<string>,
+      private readonly host: AnnotatorHost, private readonly typeChecker: ts.TypeChecker,
+      private readonly node: ts.Node, private readonly pathBlackList?: Set<string>,
       private readonly symbolsToAliasedNames = new Map<ts.Symbol, string>(),
       private readonly ensureSymbolDeclared: (sym: ts.Symbol) => void = () => {}) {
     // Normalize paths to not break checks on Windows.
@@ -176,39 +180,50 @@ export class TypeTranslator {
    *     would be fully qualified. I.e. this flag is false for generic types.
    */
   symbolToString(sym: ts.Symbol, useFqn: boolean): string {
-    if (useFqn && this.isForExterns) {
-      // For regular type emit, we can use TypeScript's naming rules, as they match Closure's name
-      // scoping rules. However when emitting externs files for ambients, naming rules change. As
-      // Closure doesn't support externs modules, all names must be global and use global fully
-      // qualified names. The code below uses TypeScript to convert a symbol to a full qualified
-      // name and then emits that.
-      let fqn = this.typeChecker.getFullyQualifiedName(sym);
-      if (fqn.startsWith(`"`) || fqn.startsWith(`'`)) {
-        // Quoted FQNs mean the name is from a module, e.g. `'path/to/module'.some.qualified.Name`.
-        // tsickle generally re-scopes names in modules that are moved to externs into the global
-        // namespace. That does not quite match TS' semantics where ambient types from modules are
-        // local. However value declarations that are local to modules but not defined do not make
-        // sense if not global, e.g. "declare class X {}; new X();" cannot work unless `X` is
-        // actually a global.
-        // So this code strips the module path from the type and uses the FQN as a global.
-        fqn = fqn.replace(/^["'][^"']+['"]\./, '');
-      }
-      // Declarations in module can re-open global types using "declare global { ... }". The fqn
-      // then contains the prefix "global." here. As we're mapping to global types, just strip the
-      // prefix.
-      const isInGlobal = (sym.declarations || []).some(d => {
-        let current: ts.Node|undefined = d;
-        while (current) {
-          if (current.flags & ts.NodeFlags.GlobalAugmentation) return true;
-          current = current.parent;
-        }
-        return false;
-      });
-      if (isInGlobal) {
-        fqn = fqn.replace(/^global\./, '');
-      }
-      return this.stripClutzNamespace(fqn);
-    }
+    // const x = 1;
+    // if (x == 1)
+    //   return this.typeChecker.symbolToString(sym, this.node, undefined, undefined);
+
+    // let ambient = true;
+    // let isGlobal = false;
+    // let externalModule: ts.SourceFile|null = null;
+    // for (const declaration of (sym.declarations || [])) {
+    //   const declarationSourceFile = ts.getOriginalNode(declaration).getSourceFile();
+    //   if (ts.isExternalModule(declarationSourceFile)) {
+    //     externalModule = declarationSourceFile;
+    //   }
+    //   let current: ts.Node|undefined = declaration;
+    //   while (current) {
+    //     if (current.flags & ts.NodeFlags.GlobalAugmentation) {
+    //       isGlobal = true;
+    //       break;
+    //     }
+    //     current = current.parent;
+    //   }
+    //   if (ambient && !isAmbient(declaration)) ambient = false;
+    // }
+
+    // if (useFqn && (this.isForExterns || ambient)) {
+    //   const fqn = this.typeChecker.getFullyQualifiedName(sym);
+    //   if (isGlobal) {
+    //     // FQN is global.foo.bar.baz.Bam; just strip the global and (potentially) clutz prefix.
+    //     const globalName = fqn.replace(/^global\./, '');
+    //     return this.stripClutzNamespace(globalName);
+    //   } else if (externalModule) {
+    //     const modulePart = fqn.match(/^["']([^"']+)['"]\.(.*)/);
+    //     if (!modulePart) {
+    //       // A global name defined in an external module, e.g. through export = angular.
+    //       return fqn;
+    //     }
+    //     const modulePath = modulePart[1];
+    //     // All symbols declared in external modules are emitted on a mangled module name.
+    //     const moduleName = mangledModuleNameFromFileName(this.host, modulePath,
+    //     externalModule.fileName); return moduleName + '.' + modulePart[2];
+    //   } else {
+    //     // Otherwise, this is just a globally declared name; emit the FQN as is.
+    //     return this.typeChecker.getFullyQualifiedName(sym);
+    //   }
+    // }
     // TypeScript resolves e.g. union types to their members, which can include symbols not declared
     // in the current scope. Ensure that all symbols found this way are actually declared.
     // This must happen before the alias check below, it might introduce a new alias for the symbol.
@@ -232,6 +247,18 @@ export class TypeTranslator {
         // as foo), str would contain both the prefx *and* the full alias (foo.alias.name).
         str = alias;
       } else {
+        const declarations = symbol.declarations || [];
+        const isTopLevelExternal =
+            declarations.some(d => d.parent !== undefined && ts.isSourceFile(d.parent) && ts.isExternalModule(d.parent));
+        const currentFile = ts.getOriginalNode(this.node).getSourceFile();
+        if (isTopLevelExternal &&
+            (this.isForExterns ||
+             declarations.every(
+                 d => ts.getOriginalNode(d).getSourceFile() === currentFile && isAmbient(d)))) {
+          // TODO: ambient external module decls, augmentations, global names.
+          str += mangledModuleName(this.host, ts.getOriginalNode(declarations[0]).getSourceFile());
+          str += '.';
+        }
         str += text;
       }
     };

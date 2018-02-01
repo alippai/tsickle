@@ -163,8 +163,8 @@ export class ModuleTypeTranslator {
 
   newTypeTranslator(context: ts.Node) {
     const translator = new typeTranslator.TypeTranslator(
-        this.typeChecker, context, this.host.typeBlackListPaths, this.symbolsToAliasedNames,
-        (sym: ts.Symbol) => this.ensureSymbolDeclared(sym));
+        this.host, this.typeChecker, context, this.host.typeBlackListPaths,
+        this.symbolsToAliasedNames, (sym: ts.Symbol) => this.ensureSymbolDeclared(sym));
     translator.isForExterns = this.isForExterns;
     translator.warn = msg => this.debugWarn(context, msg);
     return translator;
@@ -294,11 +294,12 @@ export class ModuleTypeTranslator {
       //    "export declare namespace {...}"
       // So tsickle must not introduce aliases for them that point to the imported module, as those
       // then don't resolve in Closure Compiler.
-      if (!sym.declarations ||
-          !sym.declarations.some(
-              d => d.kind !== ts.SyntaxKind.ModuleDeclaration || !isAmbient(d))) {
-        continue;
-      }
+      // XXX
+      // if (!sym.declarations ||
+      //     !sym.declarations.some(
+      //         d => d.kind !== ts.SyntaxKind.ModuleDeclaration || !isAmbient(d))) {
+      //   continue;
+      // }
       // goog: imports don't actually use the .default property that TS thinks they have.
       const qualifiedName = nsImport && isDefaultImport ? forwardDeclarePrefix :
                                                           forwardDeclarePrefix + '.' + sym.name;

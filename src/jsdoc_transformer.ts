@@ -29,6 +29,7 @@
 import {addSyntheticTrailingComment} from 'typescript';
 
 import {hasExportingDecorator} from './decorators';
+import {mangledModuleName} from './externs';
 import * as googmodule from './googmodule';
 import * as jsdoc from './jsdoc';
 import {ModuleTypeTranslator} from './module_type_translator';
@@ -60,6 +61,14 @@ export interface AnnotatorHost {
    * If true, do not modify quotes around property accessors.
    */
   disableAutoQuoting?: boolean;
+  /**
+   * Whether tsickle should insert goog.provide() calls into the externs generated for `.d.ts` files
+   * that are external modules.
+   */
+  provideExternalModuleDtsNamespace?: boolean;
+
+  host: ts.ModuleResolutionHost;
+  options: ts.CompilerOptions;
 }
 
 function addCommentOn(node: ts.Node, tags: jsdoc.Tag[], escapeExtraTags?: Set<string>) {
@@ -864,9 +873,9 @@ export function jsdocTransformer(
             // "exports." access, to maintain mutable ES6 exports semantics. Indirecting through the
             // window object means we reference the correct global symbol. Closure Compiler does
             // understand that "var foo" in externs corresponds to "window.foo".
-            result.push(ts.createStatement(ts.createAssignment(
-                ts.createPropertyAccess(ts.createIdentifier('exports'), declName),
-                ts.createPropertyAccess(ts.createIdentifier('window'), declName))));
+            // result.push(ts.createStatement(ts.createAssignment(
+            //     ts.createPropertyAccess(ts.createIdentifier('exports'), declName),
+            //     ts.createPropertyAccess(ts.createIdentifier('window'), declName))));
           } else if (!isValue) {
             // Do not emit re-exports for ModuleDeclarations.
             // Ambient ModuleDeclarations are always referenced as global symbols, so they don't
@@ -874,15 +883,16 @@ export function jsdocTransformer(
             if (node.kind === ts.SyntaxKind.ModuleDeclaration) continue;
             // Non-value objects do not exist at runtime, so we cannot access the symbol (it only
             // exists in externs). Export them as a typedef, which forwards to the type in externs.
+            const mangledName = mangledModuleName(host, sourceFile);
             const stmt = ts.createStatement(
                 ts.createPropertyAccess(ts.createIdentifier('exports'), declName));
-            addCommentOn(stmt, [{tagName: 'typedef', type: '!' + declName}]);
+            addCommentOn(stmt, [{tagName: 'typedef', type: `!${mangledName}.${declName}`}]);
             result.push(stmt);
           } else {
             // exports.declName = declName;
-            result.push(ts.createStatement(ts.createAssignment(
-                ts.createPropertyAccess(ts.createIdentifier('exports'), declName),
-                ts.createIdentifier(declName))));
+            // result.push(ts.createStatement(ts.createAssignment(
+            //     ts.createPropertyAccess(ts.createIdentifier('exports'), declName),
+            //     ts.createIdentifier(declName))));
           }
         }
         return result;
