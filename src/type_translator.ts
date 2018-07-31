@@ -227,7 +227,9 @@ export class TypeTranslator {
     // TypeScript resolves e.g. union types to their members, which can include symbols not declared
     // in the current scope. Ensure that all symbols found this way are actually declared.
     // This must happen before the alias check below, it might introduce a new alias for the symbol.
-    if ((sym.flags & ts.SymbolFlags.TypeParameter) === 0) this.ensureSymbolDeclared(sym);
+    if (!this.isForExterns && (sym.flags & ts.SymbolFlags.TypeParameter) === 0) {
+      this.ensureSymbolDeclared(sym);
+    }
 
     // This follows getSingleLineStringWriter in the TypeScript compiler.
     let str = '';
@@ -248,8 +250,9 @@ export class TypeTranslator {
         str = alias;
       } else {
         const declarations = symbol.declarations || [];
-        const isTopLevelExternal =
-            declarations.some(d => d.parent !== undefined && ts.isSourceFile(d.parent) && ts.isExternalModule(d.parent));
+        const isTopLevelExternal = declarations.some(
+            d => d.parent !== undefined && ts.isSourceFile(d.parent) &&
+                ts.isExternalModule(d.parent));
         const currentFile = ts.getOriginalNode(this.node).getSourceFile();
         if (isTopLevelExternal &&
             (this.isForExterns ||
